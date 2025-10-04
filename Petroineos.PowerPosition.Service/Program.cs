@@ -32,9 +32,8 @@ namespace Petroineos.PowerPosition.Service
                 .AddEnvironmentVariables()
                 .AddCommandLine(args);
 
-            // Configure Services
             builder.Services.Configure<ServiceConfiguration>(
-                builder.Configuration.GetSection("ServiceConfiguration"));
+              builder.Configuration.GetSection("ServiceConfiguration"));
 
             // Register ServiceConfiguration as singleton for direct injection
             builder.Services.AddSingleton(provider =>
@@ -54,6 +53,13 @@ namespace Petroineos.PowerPosition.Service
 
                 return config;
             });
+
+            // Register the actual PowerService from the provided DLL
+            builder.Services.AddSingleton<Services.IPowerService, Services.PowerService>();
+
+            // Register our services - FIXED: Use AddHostedService for background service
+            builder.Services.AddTransient<PowerPositionWorker>();
+            builder.Services.AddHostedService<PowerPositionBackgroundService>(); // ← This is the fix
 
             // Configure Logging
             builder.Logging.AddConfiguration(builder.Configuration.GetSection("Logging"));
