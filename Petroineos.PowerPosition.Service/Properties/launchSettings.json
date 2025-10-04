@@ -1,0 +1,17 @@
+{
+  "profiles": {
+    "Petroineos.PowerPosition.Service (Console)": {
+      "commandName": "Project",
+      "commandLineArgs": "--console",
+      "environmentVariables": {
+        "DOTNET_ENVIRONMENT": "Development"
+      }
+    },
+    "Petroineos.PowerPosition.Service (Windows Service)": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "DOTNET_ENVIRONMENT": "Production"
+      }
+    }
+  }
+}
