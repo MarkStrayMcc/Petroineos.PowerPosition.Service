@@ -6,88 +6,94 @@ namespace Petroineos.PowerPosition.Service
 {
     public class PowerPositionWorker
     {
+        private readonly IPowerService _powerService;
         private readonly ILogger<PowerPositionWorker> _logger;
         private readonly ServiceConfiguration _config;
 
         public PowerPositionWorker(
+            IPowerService powerService,
             ILogger<PowerPositionWorker> logger,
             ServiceConfiguration config)
         {
+            _powerService = powerService;
             _logger = logger;
             _config = config;
         }
 
         public async Task GeneratePowerPositionAsync()
         {
-            try
+            int retryCount = 0;
+
+            while (retryCount < _config.RetryCount)
             {
-                _logger.LogInformation("Starting power position extraction...");
+                try
+                {
+                    _logger.LogInformation("Starting power position extraction...");
 
-                // For this PR, we'll simulate trade data
-                // In the next PR, we'll integrate with the actual PowerService
-                var simulatedTrades = GenerateSimulatedTrades();
+                    var now = DateTime.Now;
+                    var extractTime = now;
+                    var tradeDate = GetTradeDate(now);
 
-                var aggregatedVolumes = AggregateVolumes(simulatedTrades);
-                var csvContent = GenerateCsvContent(aggregatedVolumes);
+                    _logger.LogInformation("Retrieving trades for date: {TradeDate:yyyy-MM-dd}, Extract time: {ExtractTime:yyyy-MM-dd HH:mm}",
+                        tradeDate, extractTime);
 
-                // Generate filename with current timestamp
-                var extractTime = DateTime.Now;
-                var fileName = GenerateFileName(extractTime);
-                var filePath = Path.Combine(_config.OutputDirectory, fileName);
+                    // Get power trades asynchronously from PowerService
+                    IEnumerable<PowerTrade> trades;
+                    try
+                    {
+                        trades = await _powerService.GetTradesAsync(tradeDate);
+                        _logger.LogInformation("Successfully retrieved {TradeCount} trades from PowerService", trades.Count());
+                    }
+                    catch (PowerServiceException ex)
+                    {
+                        _logger.LogError(ex, "Power service error while retrieving trades for date {TradeDate}", tradeDate);
+                        throw;
+                    }
 
-                // Ensure directory exists
-                Directory.CreateDirectory(_config.OutputDirectory);
+                    var aggregatedVolumes = AggregateVolumes(trades);
+                    var csvContent = GenerateCsvContent(aggregatedVolumes);
+                    var fileName = GenerateFileName(extractTime);
+                    var filePath = Path.Combine(_config.OutputDirectory, fileName);
 
-                // Write CSV file
-                await File.WriteAllTextAsync(filePath, csvContent);
+                    Directory.CreateDirectory(_config.OutputDirectory);
+                    await File.WriteAllTextAsync(filePath, csvContent);
 
-                _logger.LogInformation("Power position report generated successfully: {FilePath}", filePath);
-                _logger.LogInformation("Total trades processed: {TradeCount}, Total periods aggregated: {PeriodCount}",
-                    simulatedTrades.Count(), aggregatedVolumes.Count);
+                    _logger.LogInformation("Power position report generated successfully: {FilePath}", filePath);
+                    _logger.LogInformation("Total trades processed: {TradeCount}, Total periods aggregated: {PeriodCount}",
+                        trades.Count(), aggregatedVolumes.Count);
+
+                    return; // Success, exit retry loop
+                }
+                catch (PowerServiceException ex)
+                {
+                    retryCount++;
+                    _logger.LogWarning(ex, "Power service error (attempt {RetryCount}/{MaxRetries})",
+                        retryCount, _config.RetryCount);
+
+                    if (retryCount >= _config.RetryCount)
+                    {
+                        _logger.LogError(ex, "Max retry attempts reached. Failed to generate power position report.");
+                        throw;
+                    }
+
+                    // Exponential backoff
+                    var delay = TimeSpan.FromMilliseconds(_config.RetryDelayMilliseconds * Math.Pow(2, retryCount - 1));
+                    _logger.LogInformation("Waiting {DelayMs}ms before retry...", delay.TotalMilliseconds);
+                    await Task.Delay(delay);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Unexpected error generating power position report");
+                    throw;
+                }
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error generating power position report");
-                throw;
-            }
-        }
-
-        private IEnumerable<PowerTrade> GenerateSimulatedTrades()
-        {
-            var tradeDate = DateTime.Today;
-            var trades = new List<PowerTrade>();
-
-            // Simulate 2 trades as shown in the challenge example
-            var trade1 = PowerTrade.Create(tradeDate, 24);
-            var trade2 = PowerTrade.Create(tradeDate, 24);
-
-            // Trade 1: All periods have 100 volume
-            for (int i = 0; i < 24; i++)
-            {
-                trade1.Periods[i].Volume = 100;
-            }
-
-            // Trade 2: First 10 periods have 50, remaining have -20
-            for (int i = 0; i < 24; i++)
-            {
-                trade2.Periods[i].Volume = i < 10 ? 50 : -20;
-            }
-
-            trades.Add(trade1);
-            trades.Add(trade2);
-
-            _logger.LogInformation("Generated {Count} simulated trades for date {TradeDate}",
-                trades.Count, tradeDate.ToString("yyyy-MM-dd"));
-
-            return trades;
         }
 
         internal DateTime GetTradeDate(DateTime currentTime)
         {
             // Trading day starts at 23:00 previous day
-            // If current time is 23:00 or later, we're in the NEXT day's trading period
-            // If current time is before 23:00, we're in TODAY's trading period
-
+            // If current time is 23:00 or later, we need trades for the next calendar day
+            // If current time is before 23:00, we need trades for the current calendar day
             return currentTime.Hour >= 23 ? currentTime.Date.AddDays(1) : currentTime.Date;
         }
 
@@ -112,19 +118,13 @@ namespace Petroineos.PowerPosition.Service
                 }
             }
 
-            // Fix the sorting logic
+            // Proper 24-hour sorting with 23:00 first
             return aggregated
                 .OrderBy(kvp =>
                 {
-                    // Parse the time string to get hours for proper sorting
-                    var timeParts = kvp.Key.Split(':');
-                    var hour = int.Parse(timeParts[0]);
-
-                    // For proper 24-hour sorting, we want 23:00 first, then 00:00, 01:00, etc.
-                    // Convert 23:00 to -1 so it sorts before 00:00
-                    return hour == 23 ? -1 : hour;
+                    var time = TimeSpan.Parse(kvp.Key + ":00");
+                    return time.Hours == 23 ? TimeSpan.FromHours(-1) : time;
                 })
-                .ThenBy(kvp => kvp.Key)
                 .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
         }
 

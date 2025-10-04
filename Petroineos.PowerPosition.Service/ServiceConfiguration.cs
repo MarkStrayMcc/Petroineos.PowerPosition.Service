@@ -12,5 +12,6 @@ namespace Petroineos.PowerPosition.Service
         public int IntervalMinutes { get; set; } = 5;
         public int RetryCount { get; set; } = 3;
         public int RetryDelayMilliseconds { get; set; } = 1000;
+        public bool EnableDetailedLogging { get; set; } = false;
     }
 }
