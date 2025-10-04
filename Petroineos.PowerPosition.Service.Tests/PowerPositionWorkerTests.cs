@@ -7,14 +7,16 @@ namespace Petroineos.PowerPosition.Service.Tests
     public class PowerPositionWorkerTests
     {
         private readonly Mock<ILogger<PowerPositionWorker>> _loggerMock;
+        private readonly Mock<IPowerService> _powerServiceMock;
         private readonly ServiceConfiguration _config;
         private readonly PowerPositionWorker _worker;
 
         public PowerPositionWorkerTests()
         {
             _loggerMock = new Mock<ILogger<PowerPositionWorker>>();
+            _powerServiceMock = new Mock<IPowerService>();
             _config = new ServiceConfiguration { OutputDirectory = "C:\\Test" };
-            _worker = new PowerPositionWorker(_loggerMock.Object, _config);
+            _worker = new PowerPositionWorker(_powerServiceMock.Object, _loggerMock.Object, _config);
         }
 
         [Theory]
@@ -30,6 +32,46 @@ namespace Petroineos.PowerPosition.Service.Tests
 
             // Assert
             Assert.Equal(expectedTime, result);
+        }
+
+        [Fact]
+        public async Task GeneratePowerPositionAsync_WithPowerServiceException_ShouldRetry()
+        {
+            // Arrange
+            _powerServiceMock.Setup(ps => ps.GetTradesAsync(It.IsAny<DateTime>()))
+                           .ThrowsAsync(new PowerServiceException("Test exception"));
+
+            var worker = new PowerPositionWorker(_powerServiceMock.Object, _loggerMock.Object, _config);
+
+            // Act & Assert
+            await Assert.ThrowsAsync<PowerServiceException>(() => worker.GeneratePowerPositionAsync());
+
+            // Verify retry attempts
+            _powerServiceMock.Verify(ps => ps.GetTradesAsync(It.IsAny<DateTime>()),
+                Times.Exactly(_config.RetryCount));
+        }
+
+        [Fact]
+        public async Task GeneratePowerPositionAsync_WithSuccessAfterRetry_ShouldComplete()
+        {
+            // Arrange
+            var callCount = 0;
+            _powerServiceMock.Setup(ps => ps.GetTradesAsync(It.IsAny<DateTime>()))
+                           .ReturnsAsync(() =>
+                           {
+                               callCount++;
+                               if (callCount == 1)
+                                   throw new PowerServiceException("First attempt fails");
+                               return new List<PowerTrade> { CreateTrade(new[] { 100.0 }) };
+                           });
+
+            var worker = new PowerPositionWorker(_powerServiceMock.Object, _loggerMock.Object, _config);
+
+            // Act
+            await worker.GeneratePowerPositionAsync();
+
+            // Assert - should succeed on second attempt
+            Assert.Equal(2, callCount);
         }
 
         [Fact]
