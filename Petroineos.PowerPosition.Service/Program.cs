@@ -1,11 +1,8 @@
-﻿using System;
-using System.Diagnostics;
-using System.Linq;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging;
-using Petroineos.PowerPosition.Service;
+﻿using System.Diagnostics;
+using System.Runtime.InteropServices;
+using Petroineos.PowerPosition.Service.Health;
+using Petroineos.PowerPosition.Service.Interfaces;
+using Petroineos.PowerPosition.Service.Metrics;
 
 namespace Petroineos.PowerPosition.Service
 {
@@ -49,17 +46,30 @@ namespace Petroineos.PowerPosition.Service
             // Register the actual PowerService from the provided DLL
             builder.Services.AddSingleton<Services.IPowerService, Services.PowerService>();
 
-            // Register our services - FIXED: Use AddHostedService for background service
-            builder.Services.AddTransient<PowerPositionWorker>();
-            builder.Services.AddHostedService<PowerPositionBackgroundService>(); // ← This is the fix
+            // Register our services with interfaces
+            builder.Services.AddTransient<IPowerPositionWorker, PowerPositionWorker>();
+            builder.Services.AddSingleton<IHealthMonitor, ServiceHealthMonitor>();
+            builder.Services.AddSingleton<IMetricsService, ServiceMetrics>();
+
+            // Register the background service
+            builder.Services.AddHostedService<PowerPositionBackgroundService>();
 
             // Configure Logging
             builder.Logging.AddConfiguration(builder.Configuration.GetSection("Logging"));
-            builder.Logging.AddEventLog(settings =>
+
+
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                settings.SourceName = "Petroineos Power Position Service";
-                settings.LogName = "Application";
-            });
+#if WINDOWS
+    builder.Logging.AddEventLog(settings =>
+    {
+        settings.SourceName = "Petroineos Power Position Service";
+        settings.LogName = "Application";
+    });
+#else
+                builder.Logging.AddEventLog();
+#endif
+            }
 
             // Add console logging when running in console mode
             if (args.Contains("--console") || Debugger.IsAttached)
