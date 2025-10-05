@@ -40,16 +40,8 @@ namespace Petroineos.PowerPosition.Service
             {
                 var config = builder.Configuration.GetSection("ServiceConfiguration").Get<ServiceConfiguration>() ?? new ServiceConfiguration();
 
-                // Validate and set defaults
-                if (string.IsNullOrEmpty(config.OutputDirectory))
-                {
-                    config.OutputDirectory = @"C:\PowerPositionReports";
-                }
-
-                if (config.IntervalMinutes <= 0)
-                {
-                    config.IntervalMinutes = 5;
-                }
+                // Use the new validation method
+                config.ValidateAndSetDefaults();
 
                 return config;
             });

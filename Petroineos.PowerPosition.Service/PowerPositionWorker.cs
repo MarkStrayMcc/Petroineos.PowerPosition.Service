@@ -152,5 +152,31 @@ namespace Petroineos.PowerPosition.Service
         {
             return $"PowerPosition_{extractTime:yyyyMMdd}_{extractTime:HHmm}.csv";
         }
+
+        public void CleanupOldFiles(TimeSpan retentionPeriod)
+        {
+            try
+            {
+                if (!Directory.Exists(_config.OutputDirectory))
+                    return;
+
+                var cutoff = DateTime.Now - retentionPeriod;
+                var files = Directory.GetFiles(_config.OutputDirectory, "PowerPosition_*.csv");
+
+                foreach (var file in files)
+                {
+                    var fileInfo = new FileInfo(file);
+                    if (fileInfo.CreationTime < cutoff)
+                    {
+                        fileInfo.Delete();
+                        _logger.LogInformation("Deleted old file: {FileName}", file);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to cleanup old files");
+            }
+        }
     }
 }
